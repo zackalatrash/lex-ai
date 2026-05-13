@@ -1,0 +1,12 @@
+pandas
+openpyxl
+requests
+beautifulsoup4
+pypdf
+numpy
+scikit-learn
+sentence-transformers
+openai
+python-dotenv
+streamlit>=1.28.0
+
