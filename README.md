@@ -208,76 +208,264 @@ Answer + Source attribution
 
 ## NLP Approach
 
-### Text Embeddings
+This section explains the NLP concepts behind each component of the system: what each technique does, why it was chosen, and how the design decisions were made.
 
-The system uses [`BAAI/bge-small-en-v1.5`](https://huggingface.co/BAAI/bge-small-en-v1.5) from the Sentence Transformers library. This model was chosen for three reasons:
+### Overview: What is RAG?
 
-1. **Retrieval-optimised**: BGE (BAAI General Embedding) models are fine-tuned specifically for asymmetric passage retrieval on the BEIR and MTEB benchmarks, making them more appropriate than general-purpose embeddings for a RAG use case.
+Retrieval-Augmented Generation (RAG) is a technique that combines a retrieval system (finding relevant passages from a document corpus) with a generative language model (producing a natural language answer). The key insight is that a language model alone cannot be trusted for factual questions about specific documents — it may have never seen those documents during training, or may "hallucinate" plausible-sounding but incorrect details. RAG grounds the model's output in retrieved text, making answers traceable and verifiable.
 
-2. **Asymmetric query prefix**: BGE-v1.5 uses different representations for queries and documents. At query time, the prefix `"Represent this sentence for searching relevant passages: "` is prepended to the question before embedding. Document chunks are embedded without any prefix. This asymmetry is standard practice for retrieval-focused models and meaningfully improves match quality.
+The pipeline works in two phases:
 
-3. **Efficiency**: The small variant (33M parameters, 384-dimensional vectors) embeds all 1,060 chunks quickly on CPU and fits comfortably in a 16 GB RAM environment.
+**Offline (build time):** All documents are downloaded, cleaned, chunked, and embedded into vectors. These vectors are stored in the VectorDB.
 
-All vectors are L2-normalised after embedding. This converts cosine similarity to a simple dot product at search time, which is both faster and numerically stable.
+**Online (query time):** The user's question is embedded into the same vector space. The most semantically similar document chunks are retrieved. Those chunks are injected into the LLM's prompt as context, and the model generates an answer grounded in that context.
 
-### Chunking Strategy
+---
 
-Raw document text is split into overlapping chunks using a sentence-aware strategy:
+### 1. Text Embeddings
 
-1. Text is first split on sentence boundaries (`re.compile(r"(?<=[.!?])\s+")`), preserving complete sentences.
-2. Sentences are accumulated until the chunk reaches the target size (400 words).
-3. The next chunk rewinds by 80 words worth of sentences (overlap), ensuring that information near a boundary appears in both adjacent chunks.
+#### What embeddings are
 
-The 400-word target was chosen based on the context window that BGE-small handles well and the typical length of a self-contained policy argument. The 80-word overlap prevents information loss at boundaries — a sentence discussing a specific obligation should not be retrievable only if a user happens to phrase a query that aligns with the chunk start.
+An embedding model converts a piece of text into a fixed-length numerical vector — for example, 384 numbers. The key property is that semantically similar texts produce vectors that are close together in this high-dimensional space. The word "transparency" and the phrase "obligation to disclose" will produce vectors that are nearby, even though they share no characters.
+
+This is fundamentally different from keyword search (which matches exact words) or TF-IDF (which counts word frequencies). Embedding-based search understands *meaning*, so a query like "who is liable when AI goes wrong?" can match a document that uses the word "accountability" but never the word "liable".
+
+#### How transformer-based embedding works
+
+The model (`BAAI/bge-small-en-v1.5`) is a 33-million-parameter transformer trained using a contrastive learning objective. During training, it is shown triplets: a query, a relevant passage, and a non-relevant passage. It is trained to pull the query vector close to the relevant passage and push it away from the non-relevant one. After training, the final `[CLS]` token from the transformer's last layer is extracted as the document's representation.
+
+The result is a 384-dimensional vector where proximity in vector space corresponds to semantic similarity across domains — including legal and policy language, which BGE was specifically trained on through the BEIR retrieval benchmark.
+
+#### Why BGE-small was chosen
+
+BGE (BAAI General Embedding) models are fine-tuned specifically for **asymmetric passage retrieval**: the situation where a short question must be matched against longer document passages. This is exactly the RAG use case. General-purpose sentence encoders (like `all-MiniLM`) are trained on symmetric pairs (sentences of similar length) and perform worse on retrieval tasks.
+
+The BGE-v1.5 series introduces an important improvement: a **retrieval instruction prefix** applied only to queries:
+
+```
+"Represent this sentence for searching relevant passages: <question>"
+```
+
+Document chunks are embedded without any prefix. This asymmetry tells the model to map the query into the same part of the vector space that passage text occupies, even though queries and passages have different lengths and styles. Applying this prefix consistently at query time (but never at index time) is critical — if both query and document use the prefix, or neither does, the retrieval quality degrades.
+
+This is implemented in `src/embeddings.py` via the `is_query` flag:
+
+```python
+def prepare_text(self, text: str, is_query: bool = False) -> str:
+    if is_query and self.uses_bge_query_prefix:
+        return f"{BGE_QUERY_PREFIX}{cleaned}"
+    return cleaned
+```
+
+#### Vector normalisation
+
+All vectors are L2-normalised immediately after encoding. A normalised vector has a Euclidean length (norm) of 1.0. This normalisation step converts cosine similarity into a simple dot product:
+
+```
+cosine_similarity(a, b) = (a · b) / (|a| × |b|)
+                        = a · b    (when |a| = |b| = 1)
+```
+
+This is significant because:
+1. NumPy's matrix multiplication (`@`) can compute all pairwise similarities in a single operation
+2. It eliminates a division, reducing floating-point error
+3. All similarity scores are naturally bounded between -1 and 1
+
+The normalisation code in `src/embeddings.py`:
+
+```python
+norms = np.linalg.norm(array, axis=1, keepdims=True)
+safe_norms = np.where(norms == 0, 1.0, norms)  # avoid division by zero
+return array / safe_norms
+```
+
+---
+
+### 2. Chunking Strategy
+
+#### Why chunking is necessary
+
+Language models have a finite context window. Even if the full text of a 40-page document were provided, the model would struggle to focus on the relevant passage. More importantly, the embedding model must produce a single vector for each piece of text — a 40-page document would produce one averaged vector that captures everything and nothing specifically.
+
+Chunking solves both problems by dividing documents into passages small enough to embed meaningfully and retrieve precisely.
+
+#### The granularity tradeoff
+
+- **Too small** (e.g., 50 words): each chunk captures only a fragment of a policy argument. A chunk might describe the penalty without mentioning which obligation it applies to.
+- **Too large** (e.g., 1,000 words): the embedding averages over too much content. A chunk covering five different topics will be weakly similar to queries about any of them.
+
+The 400-word target was chosen as the sweet spot: long enough to capture a complete policy argument with its context, short enough to embed a specific semantic theme.
+
+#### Sentence-aware overlapping chunking
+
+A naive word-count chunker splits text at arbitrary word positions, potentially cutting mid-sentence. This produces chunks starting with fragments like `"obligations, while the deployer must..."`, which are harder for the embedding model to anchor semantically.
+
+The system instead splits text into sentences first using a regex that matches sentence-ending punctuation followed by whitespace:
+
+```python
+_SENT_SPLIT = re.compile(r"(?<=[.!?])\s+")
+```
+
+Sentences are then accumulated into chunks until the 400-word target is reached. The next chunk rewinds by 80 words worth of sentences before continuing. This **overlap** ensures that information near a chunk boundary appears in two consecutive chunks — a sentence about a specific legal obligation will not be unretrievable simply because the query aligns with the second half of the passage rather than the first.
 
 Statistics for the current knowledge base:
-- **1,060 total chunks** from 85 documents
-- **86.4%** fall between 300–500 words (tight, consistent distribution)
-- Mean chunk length: **354 words**
 
-### Similarity Search
+| Metric | Value |
+|--------|-------|
+| Total chunks | 1,060 |
+| Documents | 85 |
+| In 300–500 word range | 86.4% |
+| Mean chunk length | 354 words |
+| Chunks starting mid-sentence | < 4% |
 
-The `VectorDB` class implements cosine similarity search from scratch using NumPy:
+---
+
+### 3. Semantic Similarity Search
+
+The `VectorDB` class (`src/vector_db.py`) implements similarity search from scratch using only NumPy — no external vector database libraries.
+
+#### How the search works
+
+At query time, the user's question is embedded into a 384-dimensional vector (with the BGE retrieval prefix). All 1,060 stored chunk embeddings are already in memory as a NumPy array of shape `(1060, 384)`. A single matrix-vector multiplication computes all similarities at once:
+
+```python
+scores = candidate_embeddings @ query  # shape: (1060,)
+```
+
+Because both the stored embeddings and the query vector are L2-normalised, each element of `scores` is the cosine similarity between the query and that chunk. The top-k indices are selected with `np.argsort(scores)[::-1][:top_k]`.
+
+This approach computes 1,060 similarity scores in a single vectorised NumPy operation — significantly faster than a Python loop, and sufficient for a corpus of this size without an approximate nearest-neighbour index.
+
+#### Optional metadata filtering
+
+Before computing similarities, the system can pre-filter chunks by theme using exact string matching on the `theme` field. This reduces the candidate set and improves precision for theme-specific queries.
+
+---
+
+### 4. Maximal Marginal Relevance (MMR)
+
+#### The redundancy problem
+
+Naive top-k retrieval ranks chunks by similarity to the query. In practice, several of the top-5 results are often from the same document — the document most closely matching the query has multiple relevant passages. This wastes context slots: the LLM receives five variations of the same argument instead of five complementary perspectives.
+
+#### MMR algorithm
+
+MMR (Maximal Marginal Relevance, Carbonell & Goldstein 1998) solves this by greedily selecting chunks that are both *relevant to the query* and *different from what has already been selected*:
 
 ```
-similarity(query, chunk) = query_vector · chunk_vector
+MMR(chunk_i) = λ × sim(chunk_i, query) − (1 − λ) × max_{j ∈ Selected} sim(chunk_i, chunk_j)
 ```
 
-This works because both vectors are L2-normalised at build and query time, so the dot product equals the cosine similarity directly. The implementation avoids any external vector search library.
+At each iteration, the chunk with the highest MMR score is selected. The second term penalises chunks that are semantically close to already-selected chunks, encouraging diversity. With `λ = 0.7`, relevance is weighted roughly twice as heavily as diversity.
 
-### Maximal Marginal Relevance (MMR)
+#### Implementation detail
 
-Naive top-k retrieval often returns several chunks from the same document, wasting context slots on redundant information. The system applies **MMR** (Maximal Marginal Relevance) to rerank results for diversity.
+Running MMR over all 1,060 candidates on every query would be computationally wasteful. Instead, the top `4 × top_k = 20` candidates by raw similarity are selected first, and MMR runs only over that pool. This reduces the greedy loop to O(top_k × 20) rather than O(top_k × 1060) with negligible quality loss, since the globally optimal diverse set will almost always be found within the top-20 by similarity.
 
-MMR works iteratively: at each step it selects the candidate that maximises:
+An additional per-document cap (`max_per_doc = 2`) enforces source diversity at the document level, complementing MMR's semantic diversity.
+
+---
+
+### 5. Evidence Threshold and Out-of-Scope Detection
+
+LLMs are prone to confabulation — generating fluent but fabricated answers when the provided context is weak. To prevent this, the system evaluates the quality of retrieved evidence *before* calling the LLM.
+
+The top retrieved chunk's cosine similarity score serves as a proxy for "is this question answerable from the knowledge base?". Two thresholds are applied:
+
+| Threshold | Value | Effect |
+|-----------|-------|--------|
+| `RETRIEVAL_SIMILARITY_FLOOR` | 0.35 | Individual chunks below this score are excluded from the context |
+| `MIN_EVIDENCE_SIMILARITY` | 0.55 | If the best chunk is below this, the LLM is not called at all |
+
+The 0.55 cutoff was established empirically: on-topic policy questions score between 0.63 and 0.75, while clearly out-of-scope queries (e.g., a recipe question) score below 0.20. The threshold sits at 0.55 to create a buffer that catches weak but topically adjacent queries without blocking legitimate policy questions.
+
+---
+
+### 6. Context Management and Follow-up Handling
+
+#### Conversation history
+
+The chatbot maintains a rolling window of the last 4 conversation turns in memory. These are passed to the LLM as proper `user`/`assistant` role message pairs — not concatenated into a text blob. This matches the chat model's expected multi-turn format and allows the LLM to resolve pronouns and references across turns naturally (e.g., "what does *it* say about penalties?" after a question about the AI Act).
+
+The history window is capped at 4 turns to keep the prompt size manageable and prevent older, irrelevant context from influencing new answers.
+
+#### Contextual query enrichment for follow-ups
+
+A key challenge in multi-turn retrieval is that follow-up questions are often short and ambiguous:
+
+> "who is at fault?" (after asking about AI causing harm)
+
+This 4-word query lacks the domain vocabulary needed to embed close to policy text. Submitted to the vector store in isolation, it may score below the evidence threshold even though it is clearly in scope.
+
+The system detects short follow-up questions (under 15 words) and prepends the previous user question before embedding:
+
+```python
+def _retrieval_query(self, question: str) -> str:
+    if self.history and len(question.split()) < 15:
+        return f"{self.history[-1]['user']} {question}"
+    return question
+```
+
+This enriched query is used *only for retrieval* — the LLM still receives the original short question plus the conversation history. The result is that `"Who is responsible when an AI system causes harm? who is at fault?"` embeds correctly into the liability/accountability cluster of the vector space.
+
+---
+
+### 7. Prompt Engineering
+
+#### Context format
+
+Retrieved chunks are formatted with the document title as a header, followed by the full excerpt text, and metadata (theme, URL) as a footer annotation. This ordering is intentional: transformer attention mechanisms weight earlier tokens more heavily, so the actual content appears before metadata noise.
 
 ```
-score = λ × sim(chunk, query) − (1 − λ) × max_sim(chunk, already_selected)
+[Source 1] AI Liability Directive – Legislative Train Overview
+<excerpt text>
+— Governance, Accountability & Liability | https://...
 ```
 
-With `λ = 0.7`, the selection weights relevance more than diversity (a standard value for retrieval tasks). The candidate pool is the top `4 × top_k` chunks by raw similarity, so the greedy loop runs over at most 20 candidates rather than all 1,060 — keeping it computationally cheap.
+Placing the document ID, similarity score, and URL *after* the text ensures the model attends to the substantive content first.
 
-A per-document cap (`max_per_doc = 2`) ensures that no single document occupies more than two retrieval slots, complementing MMR's semantic diversity with source-level diversity.
+#### System prompt design
 
-### Evidence Threshold
+The system prompt was designed to counteract two failure modes common in RAG systems:
 
-Before calling the LLM, the system checks whether the top retrieved chunk scores above a minimum similarity threshold (`MIN_EVIDENCE_SIMILARITY = 0.55`). If no chunk exceeds this threshold, the LLM is not called and the user receives an "out of scope" message. This prevents the model from hallucinating answers when the knowledge base genuinely does not contain relevant information.
+1. **Minimal responses**: an instruction-following model asked only to "answer from sources" tends to produce short, hedged responses that merely summarise the sources.
+2. **Source-level isolation**: without explicit instruction, models cite sources sentence by sentence rather than synthesising a coherent argument.
 
-A separate lower floor (`RETRIEVAL_SIMILARITY_FLOOR = 0.35`) filters individual weak chunks from the context even when the overall query passes the evidence check.
+The prompt addresses both:
 
-### Context Management and Follow-up Handling
+```
+You are an expert EU AI policy analyst. [...] Write a thorough, structured answer
+that synthesises across all relevant sources — do not treat each source in isolation.
+Structure your response as follows:
+(1) a brief overview of the core answer,
+(2) the key obligations, roles, or mechanisms involved,
+(3) nuances, exceptions, or areas of complexity,
+(4) a concise conclusion.
+Cite sources inline as [Source 1], [Source 2], etc.
+Do not invent policy details, legal obligations, dates, or article numbers
+not present in the sources.
+```
 
-Conversation history is maintained as a rolling window of the last 4 turns (configurable). Each turn is passed to the LLM as proper `user`/`assistant` role messages rather than a pasted text block, matching the chat model's expected multi-turn format.
+The four-part structure guides the model toward analytical depth. The explicit "do not invent" instruction reduces hallucination of specific article numbers and dates.
 
-For short follow-up questions (under 15 words), the previous user question is prepended to the query before embedding. This enriches the query with domain vocabulary that short follow-ups typically lack, preventing them from scoring below the evidence threshold incorrectly.
+#### Temperature and token budget
 
-Example: `"who is at fault?"` becomes `"Who is responsible when an AI system causes harm? who is at fault?"` for embedding purposes, while the LLM still receives only the original short question.
+`temperature = 0.4`: Low temperature (near 0) produces flat, repetitive prose; higher temperature (above 0.7) risks generating ungrounded claims. 0.4 produces natural explanatory language while keeping the model anchored to the retrieved text.
 
-### Prompt Engineering
+`max_tokens = 800`: Without an explicit token limit, Llama 3.2 tends to truncate answers at a natural-sounding stopping point that is often too short for multi-source policy questions. Setting 800 tokens explicitly signals that a full-length response is expected.
 
-The system prompt instructs the model to act as an EU AI policy analyst and structure answers in four parts: overview, key obligations/roles, nuance/caveats, and conclusion. It is asked to synthesise across all retrieved sources rather than citing them in isolation.
+---
 
-Temperature is set to `0.4` — low enough to stay grounded in the sources, high enough to produce natural explanatory prose rather than flat bullet lists. `max_tokens = 800` prevents truncated responses on longer policy questions.
+### 8. Source Attribution
+
+Every response is accompanied by a deduplicated list of sources. The system:
+
+1. Collects all retrieved chunks that informed the answer
+2. Groups them by document ID or URL (to avoid listing the same document twice when two chunks from it were retrieved)
+3. Keeps the chunk with the highest similarity score as the representative for each document
+4. Displays the document title, theme, URL, citation string, and best similarity score
+
+This allows a reader to verify every claim made in the answer against the original EU policy document, satisfying the assignment's grounding requirement and reflecting real-world responsible AI disclosure practices.
 
 ---
 
