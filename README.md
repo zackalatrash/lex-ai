@@ -1,560 +1,353 @@
 # NLP Policy Chatbot
 
-Submission Date: %Y-%m-%d
+Submission Date: 2026-06-05
 Team Members:
+- Name (Student Number)
 - Name (Student Number)
 
 ## Project Overview
 
-This project is a command-line Retrieval-Augmented Generation chatbot about AI ethics and EU policy. The final chatbot will answer questions about trust, fairness, responsibility, transparency, bias, privacy, public sector AI, healthcare AI, law enforcement, migration, education, and related themes.
+This project is a Retrieval-Augmented Generation (RAG) chatbot that answers questions about EU AI policy, ethics, fairness, transparency, and responsibility. The chatbot grounds every response in real EU policy documents — it does not fabricate opinions or invent citations.
 
-The knowledge base is built from official EU policy documents listed in `dataset/20260331_dataset2.xlsx`. The chatbot is designed to ground its answers in retrieved source text and provide source attribution instead of inventing unsupported claims.
+The knowledge base is built from 87 official EU publications and policy documents provided in `dataset/20260331_dataset2.xlsx`. Topics covered include: algorithmic bias, deepfakes, data protection, high-risk AI systems, healthcare AI, AI in law enforcement, AI literacy, labour market impacts, cloud sovereignty, and more.
 
-## Development Status
+The system can be used via a command-line interface or an optional Streamlit web application.
 
-Implemented so far:
+---
 
-- Phase 1: project structure and central configuration
-- Phase 2: Excel dataset parsing and metadata normalization
-- Phase 3: document acquisition for PDFs and web pages
-- Phase 4: text extraction and cleaning for downloaded PDFs and HTML pages
-- Phase 5: overlapping retrieval chunk generation
-- Phase 6: pre-trained embedding model wrapper and vector normalization
-- Phase 7: custom vector database with persisted embeddings and similarity search
-- Phase 8: RAG pipeline, prompt builder, source attribution, and Ollama integration
-- Phase 9: command-line chatbot application and build commands
+## Quick Start
 
-Not implemented yet:
+```bash
+# 1. Create and activate a virtual environment
+python -m venv .venv
+source .venv/bin/activate          # macOS / Linux
+# .venv\Scripts\activate           # Windows
 
-- Streamlit interface
+# 2. Install dependencies
+pip install -r requirements.txt
+
+# 3. Install and start Ollama, then pull the language model
+#    https://ollama.com/
+ollama pull llama3.2:3b
+
+# 4. Start the chatbot (vector store is pre-built and included)
+python app.py
+
+# --- OR launch the Streamlit web interface ---
+streamlit run streamlit_app.py
+```
+
+---
+
+## Installation
+
+### Prerequisites
+
+- Python 3.10 or later
+- [Ollama](https://ollama.com/) installed and running locally
+
+### Steps
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+ollama pull llama3.2:3b
+```
+
+The processed text data and pre-built vector store are included in the repository. You do **not** need to re-download or re-process the source documents to run the chatbot.
+
+---
+
+## Usage
+
+### Command-line interface
+
+```bash
+# Start the interactive chatbot
+python app.py
+
+# Ask a single question and exit
+python app.py --ask "Who is responsible when an AI system causes harm?"
+
+# Search the vector store directly (no LLM)
+python app.py --search "algorithmic bias in hiring" --top-k 5
+
+# Filter by theme
+python app.py --search "transparency obligations" --theme "Human Oversight & Transparency"
+
+# Run the embedding sanity check
+python app.py --check-embeddings
+
+# Run the retrieval evaluation (8 benchmark questions)
+python app.py --evaluate
+
+# Rebuild the vector store from cached chunks (re-embedding only)
+python app.py --build
+
+# Force full rebuild from scratch (re-download, re-chunk, re-embed)
+python app.py --rebuild
+```
+
+### Chat commands (in interactive mode)
+
+| Command | Effect |
+|---------|--------|
+| `/help` | List available commands |
+| `/reset` | Clear conversation history and recent sources |
+| `/sources` | Show sources used in the last response |
+| `/exit` or `/quit` | Close the chatbot |
+
+### Streamlit web interface
+
+```bash
+streamlit run streamlit_app.py
+```
+
+The web interface provides:
+- **Chat** page: interactive multi-turn conversation with source cards
+- **Search** page: direct vector search with similarity scores and text excerpts
+- **Evaluate** page: run the retrieval benchmark
+- **Build** page: rebuild the vector store without touching the terminal
+- **Sources** page: browse all documents in the knowledge base
+
+---
 
 ## Project Structure
 
 ```text
 .
 ├── README.md
-├── app.py
+├── app.py                          # CLI entry point
+├── streamlit_app.py                # Streamlit chat interface
 ├── requirements.txt
 ├── dataset/
-│   └── 20260331_dataset2.xlsx
+│   └── 20260331_dataset2.xlsx      # Curated EU policy document list
 ├── data/
-│   ├── README.md
-│   ├── raw/
+│   ├── raw/                        # Downloaded PDFs and HTML files
 │   ├── processed/
-│   │   ├── documents.jsonl
-│   │   ├── chunks.jsonl
-│   │   └── download_report.json
+│   │   ├── documents.jsonl         # Extracted and cleaned document records
+│   │   ├── chunks.jsonl            # Retrieval-ready text chunks
+│   │   └── download_report.json    # Acquisition summary
 │   └── vector_store/
-│       ├── embeddings.npy
-│       ├── chunks.jsonl
-│       └── manifest.json
-├── documents/
-│   ├── project_description.md
-│   ├── implementation_plan.md
-│   └── Example Conversation Themes/
-│       ├── 20260407_scenarios.docx
-│       └── 20260413_additional_script.docx
-└── src/
-    ├── __init__.py
-    ├── config.py
-    ├── downloader.py
-    ├── preprocessing.py
-    ├── embeddings.py
-    ├── vector_db.py
-    ├── chat.py
-    └── utils.py
+│       ├── embeddings.npy          # Normalised chunk embeddings (NumPy)
+│       ├── chunks.jsonl            # Chunk text and metadata
+│       └── manifest.json           # Store metadata (model, dimension, count)
+├── pages/                          # Streamlit multi-page app pages
+│   ├── 1_Search.py
+│   ├── 2_Evaluate.py
+│   ├── 3_Build.py
+│   └── 4_Sources.py
+├── src/
+│   ├── config.py                   # Central configuration
+│   ├── downloader.py               # Document acquisition pipeline
+│   ├── preprocessing.py            # Text extraction, cleaning, chunking
+│   ├── embeddings.py               # Embedding model wrapper
+│   ├── vector_db.py                # Custom vector database
+│   ├── chat.py                     # RAG pipeline and chatbot logic
+│   ├── evaluate.py                 # Retrieval evaluation
+│   └── utils.py                    # Shared utilities
+└── documents/
+    └── Example Conversation Themes/
+        ├── 20260407_scenarios.docx
+        └── 20260413_additional_script.docx
 ```
 
-## Installation
+---
 
-Create and activate a virtual environment:
+## Architecture
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
+The system is organised into five sequential stages:
+
+```
+Excel dataset
+     │
+     ▼
+[Downloader]  ──→  data/raw/          (PDFs and HTML files)
+     │
+     ▼
+[Preprocessor] ──→  documents.jsonl   (extracted + cleaned text)
+     │
+     ▼
+[Chunker]      ──→  chunks.jsonl      (overlapping text segments)
+     │
+     ▼
+[EmbeddingModel] ──→  embeddings.npy  (dense vectors, 384-dim)
+     │
+     ▼
+[VectorDB]     ──→  vector_store/     (persisted similarity index)
+     │
+     ▼
+[PolicyChatbot]                       (RAG pipeline + Ollama LLM)
 ```
 
-Install dependencies:
+At query time:
 
-```bash
-pip install -r requirements.txt
+```
+User question
+     │
+     ▼
+[EmbeddingModel.embed_text]   (query vector with BGE prefix)
+     │
+     ▼
+[VectorDB.search]             (cosine similarity + MMR reranking)
+     │
+     ▼
+[PolicyChatbot.build_messages] (system prompt + history + context)
+     │
+     ▼
+[Ollama llama3.2:3b]          (grounded answer generation)
+     │
+     ▼
+Answer + Source attribution
 ```
 
-On Windows, activate the virtual environment with:
+---
 
-```bash
-.venv\Scripts\activate
+## NLP Approach
+
+### Text Embeddings
+
+The system uses [`BAAI/bge-small-en-v1.5`](https://huggingface.co/BAAI/bge-small-en-v1.5) from the Sentence Transformers library. This model was chosen for three reasons:
+
+1. **Retrieval-optimised**: BGE (BAAI General Embedding) models are fine-tuned specifically for asymmetric passage retrieval on the BEIR and MTEB benchmarks, making them more appropriate than general-purpose embeddings for a RAG use case.
+
+2. **Asymmetric query prefix**: BGE-v1.5 uses different representations for queries and documents. At query time, the prefix `"Represent this sentence for searching relevant passages: "` is prepended to the question before embedding. Document chunks are embedded without any prefix. This asymmetry is standard practice for retrieval-focused models and meaningfully improves match quality.
+
+3. **Efficiency**: The small variant (33M parameters, 384-dimensional vectors) embeds all 1,060 chunks quickly on CPU and fits comfortably in a 16 GB RAM environment.
+
+All vectors are L2-normalised after embedding. This converts cosine similarity to a simple dot product at search time, which is both faster and numerically stable.
+
+### Chunking Strategy
+
+Raw document text is split into overlapping chunks using a sentence-aware strategy:
+
+1. Text is first split on sentence boundaries (`re.compile(r"(?<=[.!?])\s+")`), preserving complete sentences.
+2. Sentences are accumulated until the chunk reaches the target size (400 words).
+3. The next chunk rewinds by 80 words worth of sentences (overlap), ensuring that information near a boundary appears in both adjacent chunks.
+
+The 400-word target was chosen based on the context window that BGE-small handles well and the typical length of a self-contained policy argument. The 80-word overlap prevents information loss at boundaries — a sentence discussing a specific obligation should not be retrievable only if a user happens to phrase a query that aligns with the chunk start.
+
+Statistics for the current knowledge base:
+- **1,060 total chunks** from 85 documents
+- **86.4%** fall between 300–500 words (tight, consistent distribution)
+- Mean chunk length: **354 words**
+
+### Similarity Search
+
+The `VectorDB` class implements cosine similarity search from scratch using NumPy:
+
+```
+similarity(query, chunk) = query_vector · chunk_vector
 ```
 
-## Current Usage
+This works because both vectors are L2-normalised at build and query time, so the dot product equals the cosine similarity directly. The implementation avoids any external vector search library.
 
-Start the chatbot:
+### Maximal Marginal Relevance (MMR)
 
-```bash
-python app.py
+Naive top-k retrieval often returns several chunks from the same document, wasting context slots on redundant information. The system applies **MMR** (Maximal Marginal Relevance) to rerank results for diversity.
+
+MMR works iteratively: at each step it selects the candidate that maximises:
+
+```
+score = λ × sim(chunk, query) − (1 − λ) × max_sim(chunk, already_selected)
 ```
 
-Show available commands:
+With `λ = 0.7`, the selection weights relevance more than diversity (a standard value for retrieval tasks). The candidate pool is the top `4 × top_k` chunks by raw similarity, so the greedy loop runs over at most 20 candidates rather than all 1,060 — keeping it computationally cheap.
 
-```bash
-python app.py --help
-```
+A per-document cap (`max_per_doc = 2`) ensures that no single document occupies more than two retrieval slots, complementing MMR's semantic diversity with source-level diversity.
 
-Run the embedding sanity check:
+### Evidence Threshold
 
-```bash
-python app.py --check-embeddings
-```
+Before calling the LLM, the system checks whether the top retrieved chunk scores above a minimum similarity threshold (`MIN_EVIDENCE_SIMILARITY = 0.55`). If no chunk exceeds this threshold, the LLM is not called and the user receives an "out of scope" message. This prevents the model from hallucinating answers when the knowledge base genuinely does not contain relevant information.
 
-Search the saved vector store:
+A separate lower floor (`RETRIEVAL_SIMILARITY_FLOOR = 0.35`) filters individual weak chunks from the context even when the overall query passes the evidence check.
 
-```bash
-python app.py --search "How do deepfakes affect children?" --top-k 3
-```
+### Context Management and Follow-up Handling
 
-Search with an exact theme filter:
+Conversation history is maintained as a rolling window of the last 4 turns (configurable). Each turn is passed to the LLM as proper `user`/`assistant` role messages rather than a pasted text block, matching the chat model's expected multi-turn format.
 
-```bash
-python app.py --search "How do deepfakes affect children?" --theme "Deepfakes & Manipulation"
-```
+For short follow-up questions (under 15 words), the previous user question is prepended to the query before embedding. This enriches the query with domain vocabulary that short follow-ups typically lack, preventing them from scoring below the evidence threshold incorrectly.
 
-Ask one source-grounded question with the RAG pipeline:
+Example: `"who is at fault?"` becomes `"Who is responsible when an AI system causes harm? who is at fault?"` for embedding purposes, while the LLM still receives only the original short question.
 
-```bash
-python app.py --ask "How do deepfakes affect children?" --top-k 3
-```
+### Prompt Engineering
 
-Start the command-line chat loop:
+The system prompt instructs the model to act as an EU AI policy analyst and structure answers in four parts: overview, key obligations/roles, nuance/caveats, and conclusion. It is asked to synthesise across all retrieved sources rather than citing them in isolation.
 
-```bash
-python app.py --chat
-```
+Temperature is set to `0.4` — low enough to stay grounded in the sources, high enough to produce natural explanatory prose rather than flat bullet lists. `max_tokens = 800` prevents truncated responses on longer policy questions.
 
-Chat commands:
+---
 
-- `/help`
-- `/reset`
-- `/sources`
-- `/exit`
-- `/quit`
+## Data Acquisition
 
-Build a small test subset of the source metadata and downloaded files:
-This parses metadata, downloads or reuses files, extracts text, writes cleaned document records, creates retrieval chunks, and builds the vector store.
+### Pipeline
 
-```bash
-python app.py --build --limit 3
-```
+1. **Parse** `dataset/20260331_dataset2.xlsx` (Sheet1, 87 rows) to extract document ID, title, URL, theme, publisher, date, and citation.
+2. **Classify** each URL as PDF or HTML by extension; fall back to HTTP `HEAD` content-type check for ambiguous URLs.
+3. **Download** PDFs with `requests`, saving to `data/raw/<doc_id>.pdf`. HTML pages are downloaded and saved as `data/raw/<doc_id>.html`.
+4. **Extract text**: PDFs use `pypdf` (all pages); HTML uses `BeautifulSoup` with removal of scripts, styles, navigation, headers, footers, and form elements.
+5. **Clean** extracted text: normalise whitespace, repair broken hyphenated line endings, strip non-printable characters.
+6. **Cache**: files already on disk are skipped on subsequent builds. `--rebuild` forces re-download.
 
-Force re-downloading for a small test subset:
+### Issues Encountered
 
-```bash
-python app.py --rebuild --limit 3
-```
+| Document | Issue | Handling |
+|----------|-------|----------|
+| R21-03 | HTTP 403 Forbidden — CDT Europe blocked automated access | Skipped; recorded in `download_report.json` |
+| R18-01 | Extracted text under 500 characters (likely a redirect or login wall) | Marked `too_short`; excluded from chunks |
 
-Build without `--limit` will process all 87 dataset records:
+85 of 87 documents were successfully extracted and chunked. The two missing documents represent 2.3% of the dataset and do not cover any theme exclusively — their topics are addressed by other documents in the knowledge base.
 
-```bash
-python app.py --build
-```
+---
 
-For development, use `--limit` first to avoid repeatedly downloading all sources.
+## Known Limitations
 
-## Phase 1: Project Setup
+- **Knowledge base coverage**: The dataset does not include the full text of every AI Act article. Questions about specific provider/deployer liability articles (Arts. 16–29) may receive partial answers because those articles are not directly in the corpus.
 
-Phase 1 created the base project structure, placeholder Python modules, data directories, and central configuration.
+- **Language**: All documents are in English. Questions in other languages are not supported.
 
-Important configuration values live in `src/config.py`, including:
+- **LLM dependency**: Answer generation requires a locally running Ollama instance. If Ollama is unavailable, the system still retrieves and displays source passages but cannot generate a synthesised answer.
 
-- Dataset path
-- Data directories
-- Processed output paths
-- Chunk size and overlap settings
-- Embedding model name
-- Ollama base URL and model name
-- Retrieval top-k
-- HTTP timeout and user-agent
+- **Static knowledge base**: The vector store reflects the documents available at build time. New EU policy publications are not automatically included.
 
-Acceptance checks completed:
+- **Out-of-scope detection**: The evidence threshold (0.55 cosine similarity) reliably rejects clearly unrelated queries but may occasionally flag genuinely in-scope questions that use non-standard terminology. Rephrasing with policy vocabulary typically resolves this.
 
-- `python3 app.py` starts without import errors.
-- `python3 app.py --help` works.
-- Data directories exist and are documented in `data/README.md`.
-- No `.venv`, `__pycache__`, `.pyc`, or `.DS_Store` files are required.
+- **PDF extraction quality**: A small number of PDFs contain scanned images rather than machine-readable text. `pypdf` cannot extract text from image-only PDFs; those documents produce very short or empty extractions and are excluded from the knowledge base.
 
-## Phase 2: Dataset Parsing
+---
 
-The dataset parser reads `dataset/20260331_dataset2.xlsx` from `Sheet1`. `Sheet2` is empty and ignored.
+## Configuration
 
-Dataset columns:
+All tuneable parameters are centralised in `src/config.py`:
 
-- `id`
-- `title`
-- `url`
-- `publisher`
-- `date`
-- `theme`
-- `keywords`
-- `bronvermelding`
-
-The parser normalizes every row into records with these fields:
-
-- `doc_id`
-- `title`
-- `url`
-- `theme`
-- `keywords`
-- `source_type`
-- `publisher`
-- `date`
-- `citation`
-- `local_path`
-- `status`
-- `error`
-- `duplicate_of`
-
-Current dataset inspection:
-
-- Rows: 87
-- URLs: 87
-- Missing URLs: 0
-- Duplicate URLs: 0
-- Direct PDF-like URLs: 21
-- Web or content-type-dependent URLs: 66
-
-Output:
-
-```text
-data/processed/documents.jsonl
-```
-
-## Phase 3: Document Acquisition
-
-The downloader handles source acquisition from the URLs in the dataset.
-
-Implemented behavior:
-
-- Classifies `.pdf` URLs as PDFs.
-- Uses HTTP `HEAD` content-type checks when the URL extension is unclear.
-- Saves PDFs as `.pdf`.
-- Saves HTML pages as `.html`.
-- Uses stable filenames based on `doc_id`.
-- Normalizes unsafe filename characters.
-- Uses a configured timeout.
-- Sends a user-agent header.
-- Follows redirects.
-- Skips files that already exist unless `--rebuild` is used.
-- Logs failed and unsupported URLs without stopping the whole run.
-
-Outputs:
-
-```text
-data/raw/
-data/processed/documents.jsonl
-data/processed/download_report.json
-```
-
-The current small test run downloaded or reused three sources:
-
-```text
-data/raw/R01-01.pdf
-data/raw/R01_02.pdf
-data/raw/R01-03.html
-```
-
-The download report contains:
-
-- Total records processed
-- Downloaded count
-- Skipped existing count
-- Failed count
-- Unsupported count
-- Duplicate count
-- Missing URL count
-- Details for failed or unsupported URLs
-
-## Phase 4: Text Extraction and Cleaning
-
-The preprocessing step extracts text from downloaded source files and saves the cleaned text back into `data/processed/documents.jsonl`.
-
-Implemented behavior:
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `EMBEDDING_MODEL_NAME` | `BAAI/bge-small-en-v1.5` | Sentence Transformers model |
+| `DEFAULT_CHUNK_SIZE` | `400` | Target words per chunk |
+| `DEFAULT_CHUNK_OVERLAP` | `80` | Overlap words between chunks |
+| `DEFAULT_RETRIEVAL_TOP_K` | `5` | Chunks returned per query |
+| `DEFAULT_MAX_CHUNKS_PER_DOC` | `2` | Max chunks per document in results |
+| `MMR_LAMBDA` | `0.7` | MMR relevance weight (0=diversity, 1=relevance) |
+| `MIN_EVIDENCE_SIMILARITY` | `0.55` | Minimum score to call the LLM |
+| `OLLAMA_MODEL_NAME` | `llama3.2:3b` | Local Ollama model |
+| `MAX_HISTORY_TURNS` | `4` | Conversation turns kept in context |
+| `MAX_GENERATION_TOKENS` | `800` | Maximum LLM output tokens |
+| `GENERATION_TEMPERATURE` | `0.4` | LLM sampling temperature |
 
-- PDF text extraction with `pypdf`.
-- HTML text extraction with BeautifulSoup.
-- PDF extraction reads every available page reported by the PDF parser.
-- HTML extraction removes obvious non-content elements such as scripts, styles, navigation, headers, footers, forms, buttons, SVGs, and sidebars.
-- Extracted text is cleaned into readable plain text.
-- Excessive whitespace and repeated blank lines are normalized.
-- Broken hyphenated line endings are repaired where practical.
-- Missing local files, unsupported source types, extraction failures, empty text, and very short text are recorded in metadata instead of stopping the pipeline.
+---
 
-Each processed document record keeps the original document metadata and adds fields such as:
-
-- `text`
-- `text_char_count`
-- `raw_text_char_count`
-- `extraction_status`
-- `extraction_error`
-- `extraction_method`
-- `page_count`
-
-Possible `extraction_status` values include:
+## Dependencies
 
-- `extracted`
-- `too_short`
-- `empty_text`
-- `extraction_failed`
-- `skipped`
-
-Current small test result for `python app.py --build --limit 3`:
-
-- Records processed: 3
-- Extracted: 3
-- Too short: 0
-- Empty: 0
-- Failed: 0
-- Skipped: 0
+See `requirements.txt`. Key libraries:
 
-The cleaned text is ready for Phase 5 chunking.
-
-## Phase 5: Chunking
-
-The chunking step splits cleaned document text into overlapping word-based chunks for later semantic retrieval.
-
-Current settings from `src/config.py`:
-
-- Chunk size: 400 words
-- Chunk overlap: 80 words
-
-Why this strategy is used:
-
-- 400-word chunks keep retrieval focused on a smaller policy passage.
-- 80-word overlap reduces the risk that important context is split across chunk boundaries.
-- Word-based chunks are simple to explain and inspect for the assignment.
-
-Each chunk is saved to:
-
-```text
-data/processed/chunks.jsonl
-```
-
-Each chunk record contains:
-
-- `chunk_id`
-- `doc_id`
-- `title`
-- `theme`
-- `url`
-- `publisher`
-- `date`
-- `citation`
-- `source_type`
-- `local_path`
-- `chunk_index`
-- `chunk_word_count`
-- `text`
-
-Current small test result for `python app.py --build --limit 3`:
-
-- Documents processed for chunking: 3
-- Chunks created: 22
-- Minimum chunk length: 218 words
-- Maximum chunk length: 400 words
-- Average chunk length: 377.05 words
-- Documents with zero chunks: 0
-
-The chunks are ready for Phase 6 embedding generation.
-
-## Phase 6: Embeddings
-
-The embedding step converts text into numerical vectors for semantic search. The implementation uses a pre-trained Sentence Transformers model, not a custom embedding model.
-
-Current model from `src/config.py`:
-
-```text
-BAAI/bge-small-en-v1.5
-```
-
-Current vector dimension:
-
-```text
-384
-```
-
-Implemented behavior:
-
-- `EmbeddingModel.embed_text(text)` embeds a single string.
-- `EmbeddingModel.embed_batch(texts)` embeds a list of strings.
-- Returned embeddings are NumPy arrays.
-- Non-empty embeddings are normalized to unit length.
-- Empty strings return zero vectors safely.
-- Zero vectors are handled without divide-by-zero errors.
-- BGE query embeddings use the recommended retrieval prefix: `Represent this sentence for searching relevant passages:`.
-- Document/chunk embeddings are not prefixed.
-- A lightweight sanity check confirms identical text has higher similarity than unrelated text.
-
-Run:
-
-```bash
-python app.py --check-embeddings
-```
-
-Current sanity check result:
-
-- Model: `BAAI/bge-small-en-v1.5`
-- Vector dimension: 384
-- Self similarity: 0.956665
-- Different-text similarity: 0.398063
-- Empty vector norm: 0.0
-- Sanity check passed: True
-
-The vector dimension will also be written into the vector store manifest in Phase 7.
-
-## Phase 7: Custom Vector Database
-
-The vector database is implemented from scratch in `src/vector_db.py` using NumPy arrays and JSONL metadata. It does not use a pre-built vector database library.
-
-The vector store is saved in:
-
-```text
-data/vector_store/
-```
-
-Files:
-
-- `embeddings.npy`: NumPy array containing normalized chunk embeddings
-- `chunks.jsonl`: human-readable chunk text and metadata
-- `manifest.json`: vector store metadata
-
-The manifest records:
-
-- Creation timestamp
-- Embedding model name
-- Vector dimension
-- Chunk count
-- Embedding array shape
-- File names
-- Whether embeddings are normalized
-
-Current small test vector store:
-
-- Embedding model: `BAAI/bge-small-en-v1.5`
-- Vector dimension: 384
-- Chunk count: 22
-- Embedding shape: `[22, 384]`
-- Normalized: True
-
-Implemented behavior:
-
-- Builds embeddings from `data/processed/chunks.jsonl`.
-- Stores embeddings separately from chunk metadata.
-- Saves and loads the vector store across runs.
-- Loading the vector store does not recompute embeddings.
-- Implements cosine similarity search with NumPy.
-- Returns top-k results ordered by similarity.
-- Each result includes chunk text, metadata, and similarity score.
-- Handles an empty database gracefully.
-- Handles `top_k` larger than the number of chunks.
-- Supports optional exact metadata filtering, currently useful for `theme`.
-
-Example:
-
-```bash
-python app.py --search "How do deepfakes affect children?" --top-k 3
-```
-
-The current small test search returns relevant chunks from `Children and Deepfakes`.
-
-## Phase 8: RAG Pipeline and Chatbot Logic
-
-The RAG pipeline is implemented in `src/chat.py`. It combines query embedding, vector search, prompt construction, local LLM generation through Ollama, conversation history, and source attribution.
-
-Implemented behavior:
-
-- Embeds user questions as retrieval queries.
-- Retrieves relevant chunks from the custom `VectorDB`.
-- Supports configurable `top_k`.
-- Supports optional exact `theme` filtering.
-- Handles empty questions with a helpful message.
-- Builds a prompt containing the question, retrieved source excerpts, source metadata, and recent conversation history.
-- Instructs the model to answer only from the provided EU policy source excerpts.
-- Instructs the model to say when the sources are insufficient.
-- Instructs the model to cite source labels such as `[Source 1]`.
-- Calls a local Ollama model through the OpenAI-compatible SDK.
-- Uses configurable Ollama settings from `src/config.py`.
-- Handles Ollama connection/model errors without crashing.
-- De-duplicates sources in the final source list.
-- Keeps a bounded rolling conversation history.
-- Supports `/reset`, `/sources`, and `/help` in the chat loop.
-
-Current Ollama configuration:
-
-```text
-Base URL: http://localhost:11434/v1
-Model: llama3.1
-```
-
-One-shot RAG command:
-
-```bash
-python app.py --ask "How do deepfakes affect children?" --top-k 3
-```
-
-If Ollama is not running or the configured model is missing, the system still retrieves sources and prints a clear model error instead of crashing.
-
-Current local test result:
-
-- Retrieval returned relevant chunks for `How do deepfakes affect children?`
-- Top source: `Children and Deepfakes`
-- Source attribution included title, document ID, theme, URL, citation, and similarity score.
-- If Ollama is reachable, the chatbot produces a grounded answer with source labels.
-- If Ollama is not reachable, the CLI reports: `I could retrieve relevant source material, but I could not contact the local Ollama model.`
-
-## Phase 9: CLI Application
-
-`app.py` is the main command-line entry point. Running `python app.py` starts the chatbot by default.
-
-Implemented behavior:
-
-- `python app.py` starts the chatbot.
-- `python app.py --chat` also starts the chatbot.
-- Users can type questions and receive source-grounded answers.
-- The chatbot prints sources after each response.
-- `/help` lists available chat commands.
-- `/reset` clears conversation history and recent sources.
-- `/sources` shows sources used in the most recent response.
-- `/exit` and `/quit` close the chatbot.
-- Empty input is handled without crashing.
-- Keyboard interruption exits cleanly.
-- Missing vector store errors include build instructions.
-
-Build commands:
-
-```bash
-python app.py --build
-python app.py --rebuild
-python app.py --build --limit 10
-```
-
-Useful diagnostic commands:
-
-```bash
-python app.py --check-embeddings
-python app.py --search "How do deepfakes affect children?" --top-k 3
-python app.py --ask "How do deepfakes affect children?" --top-k 3
-```
-
-## Development Notes
-
-Use small test mode while building later phases:
-
-```bash
-python app.py --build --limit 3
-```
-
-Use full mode only when needed:
-
-```bash
-python app.py --build
-```
-
-Raw downloaded PDFs should not be included in the final submission zip. The final submission should include processed text, chunks, and the vector store once those are generated.
+| Library | Purpose |
+|---------|---------|
+| `sentence-transformers` | Pre-trained embedding model (BGE-small) |
+| `numpy` | Vector storage, cosine similarity, MMR |
+| `openai` | OpenAI-compatible SDK for Ollama |
+| `requests` + `beautifulsoup4` | Document downloading and HTML extraction |
+| `pypdf` | PDF text extraction |
+| `pandas` + `openpyxl` | Excel dataset parsing |
+| `streamlit` | Optional web interface |
+| `torch` | PyTorch backend for sentence-transformers |

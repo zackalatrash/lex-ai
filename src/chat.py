@@ -11,12 +11,15 @@ from openai import OpenAIError
 from src.config import (
     DEFAULT_MAX_CHUNKS_PER_DOC,
     DEFAULT_RETRIEVAL_TOP_K,
+    GENERATION_TEMPERATURE,
     MAX_CONTEXT_CHARS_PER_CHUNK,
+    MAX_GENERATION_TOKENS,
     MAX_HISTORY_TURNS,
     MIN_EVIDENCE_SIMILARITY,
     OLLAMA_BASE_URL,
     OLLAMA_MODEL_NAME,
     OPENAI_API_KEY_FOR_OLLAMA,
+    REQUEST_TIMEOUT_SECONDS,
     RETRIEVAL_SIMILARITY_FLOOR,
 )
 from src.embeddings import EmbeddingModel
@@ -69,7 +72,7 @@ class PolicyChatbot:
         self._client = OpenAI(
             base_url=ollama_base_url,
             api_key=OPENAI_API_KEY_FOR_OLLAMA,
-            timeout=30.0,
+            timeout=float(REQUEST_TIMEOUT_SECONDS),
         )
 
     def load_vector_store(self) -> None:
@@ -113,11 +116,17 @@ class PolicyChatbot:
             {
                 "role": "system",
                 "content": (
-                    "You are an EU AI policy assistant for an NLP assignment. "
-                    "Answer only from the retrieved source excerpts provided in the user's message. "
-                    "Ground every claim in the sources and cite them inline as [Source 1], [Source 2], etc. "
-                    "If the sources are insufficient, say so explicitly. "
-                    "Do not invent policy details, legal obligations, dates, or citations."
+                    "You are an expert EU AI policy analyst. "
+                    "You will be given retrieved excerpts from EU policy documents and a question. "
+                    "Write a thorough, structured answer that synthesises across all relevant sources — "
+                    "do not treat each source in isolation. "
+                    "Structure your response as follows: "
+                    "(1) a brief overview of the core answer, "
+                    "(2) the key obligations, roles, or mechanisms involved, "
+                    "(3) nuances, exceptions, or areas of complexity, "
+                    "(4) a concise conclusion. "
+                    "Cite sources inline as [Source 1], [Source 2], etc. whenever you draw on them. "
+                    "Do not invent policy details, legal obligations, dates, or article numbers not present in the sources."
                 ),
             }
         ]
@@ -139,7 +148,8 @@ class PolicyChatbot:
             completion = self._client.chat.completions.create(
                 model=self.ollama_model,
                 messages=messages,
-                temperature=0.2,
+                temperature=GENERATION_TEMPERATURE,
+                max_tokens=MAX_GENERATION_TOKENS,
             )
             answer = completion.choices[0].message.content or ""
             return answer.strip(), None
@@ -155,6 +165,17 @@ class PolicyChatbot:
                 str(error),
             )
 
+    def _retrieval_query(self, question: str) -> str:
+        """Return an enriched query for embedding when the question is a short follow-up.
+
+        Short follow-ups use casual vocabulary that embeds far from policy text. Prepending
+        the previous user question gives the embedding enough domain context to retrieve
+        relevant chunks while leaving the original question unchanged for the LLM.
+        """
+        if self.history and len(question.split()) < 15:
+            return f"{self.history[-1]['user']} {question}"
+        return question
+
     def answer(self, question: str, top_k: int | None = None, theme: str | None = None) -> ChatResponse:
         """Retrieve context, call the model, update history, and return a response."""
         if not question or not question.strip():
@@ -166,7 +187,8 @@ class PolicyChatbot:
                 error="empty_question",
             )
 
-        retrieved_chunks = self.retrieve(question, top_k=top_k, theme=theme, max_per_doc=DEFAULT_MAX_CHUNKS_PER_DOC)
+        retrieval_query = self._retrieval_query(question)
+        retrieved_chunks = self.retrieve(retrieval_query, top_k=top_k, theme=theme, max_per_doc=DEFAULT_MAX_CHUNKS_PER_DOC)
         filtered_chunks = [
             c for c in retrieved_chunks
             if float(c.get("similarity", 0.0)) >= RETRIEVAL_SIMILARITY_FLOOR
@@ -221,13 +243,9 @@ class PolicyChatbot:
             sections.append(
                 "\n".join(
                     [
-                        f"[Source {index}]",
-                        f"Title: {chunk.get('title')}",
-                        f"Document ID: {chunk.get('doc_id')}",
-                        f"Theme: {chunk.get('theme')}",
-                        f"URL: {chunk.get('url')}",
-                        f"Similarity: {float(chunk.get('similarity', 0.0)):.4f}",
-                        f"Excerpt: {text}",
+                        f"[Source {index}] {chunk.get('title')}",
+                        text,
+                        f"— {chunk.get('theme')} | {chunk.get('url')}",
                     ]
                 )
             )

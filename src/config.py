@@ -38,17 +38,21 @@ MMR_LAMBDA = 0.7            # 0 = pure diversity, 1 = pure relevance
 MMR_FETCH_K_MULTIPLIER = 4  # candidates fetched before MMR = top_k × this
 MIN_EVIDENCE_SIMILARITY = 0.55  # skip LLM call if best chunk scores below this
 
-EMBEDDING_MODEL_NAME = "Qwen/Qwen3-Embedding-0.6B"
-EMBEDDING_BATCH_SIZE = 4  # lower = less MPS/GPU memory per batch; increase if you have headroom
+EMBEDDING_MODEL_NAME = "BAAI/bge-small-en-v1.5"
+EMBEDDING_BATCH_SIZE = 32
+EMBEDDING_TRUST_REMOTE_CODE = False
+EMBEDDING_CONFIG_KWARGS: dict = {}
 OLLAMA_BASE_URL = "http://localhost:11434/v1"
-OLLAMA_MODEL_NAME = "llama3.1"
+OLLAMA_MODEL_NAME = "llama3.2:3b"
 OPENAI_API_KEY_FOR_OLLAMA = "ollama"
 
-REQUEST_TIMEOUT_SECONDS = 30
+REQUEST_TIMEOUT_SECONDS = 120
 USER_AGENT = "NLPPolicyChatbot/1.0 (+student assignment)"
 
 MAX_HISTORY_TURNS = 4
 MAX_CONTEXT_CHARS_PER_CHUNK = 1600
+MAX_GENERATION_TOKENS = 800
+GENERATION_TEMPERATURE = 0.4
 
 RETRIEVAL_SIMILARITY_FLOOR = 0.35
 RELEVANCE_THRESHOLD = 0.40

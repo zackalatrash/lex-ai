@@ -6,6 +6,7 @@ pypdf
 numpy
 scikit-learn
 sentence-transformers
+torch
 openai
 python-dotenv
 streamlit>=1.28.0

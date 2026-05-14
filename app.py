@@ -182,73 +182,81 @@ def main() -> None:
         return
 
     if args.build or args.rebuild:
-        records, summary = parse_dataset(limit=args.limit)
-        print(f"{APP_NAME}: dataset parsed.")
-        print(f"Dataset: {summary.dataset_path}")
-        print(f"Sheet: {summary.sheet_name}")
-        print(f"Rows read: {summary.rows}")
-        print(f"URLs found: {summary.urls}")
-        print(f"Missing URLs: {summary.missing_urls}")
-        print(f"Duplicate URLs: {summary.duplicate_urls}")
-        print(f"Columns: {', '.join(summary.columns)}")
-        print(f"Metadata records saved: {len(records)}")
-        print(f"Output: {project_relative(PROCESSED_DOCUMENTS_PATH)}")
-        print("Downloading source documents...")
-        updated_records, download_summary = download_documents(records, force=args.rebuild)
-        print(f"Download records processed: {download_summary.total_records}")
-        print(f"Downloaded: {download_summary.downloaded}")
-        print(f"Skipped existing: {download_summary.skipped}")
-        print(f"Failed: {download_summary.failed}")
-        print(f"Unsupported: {download_summary.unsupported}")
-        print(f"Duplicates: {download_summary.duplicates}")
-        print(f"Missing URLs: {download_summary.missing_urls}")
-        print(f"Updated metadata: {project_relative(PROCESSED_DOCUMENTS_PATH)}")
-        print(f"Download report: {project_relative(DOWNLOAD_REPORT_PATH)}")
-        if download_summary.failed_urls:
-            print("Failed or unsupported URLs:")
-            for failed in download_summary.failed_urls[:10]:
-                print(f"- {failed['doc_id']}: {failed['status']} - {failed['error']}")
-            remaining = len(download_summary.failed_urls) - 10
-            if remaining > 0:
-                print(f"...and {remaining} more. See the download report for details.")
-        print("Extracting and cleaning text...")
-        processed_records, extraction_summary = extract_and_clean_documents(updated_records)
-        print(f"Extraction records processed: {extraction_summary.total_records}")
-        print(f"Extracted: {extraction_summary.extracted}")
-        print(f"Too short: {extraction_summary.too_short}")
-        print(f"Empty: {extraction_summary.empty}")
-        print(f"Failed: {extraction_summary.failed}")
-        print(f"Skipped: {extraction_summary.skipped}")
-        print(f"Cleaned metadata and text: {project_relative(PROCESSED_DOCUMENTS_PATH)}")
-        if extraction_summary.problem_documents:
-            print("Extraction issues:")
-            for problem in extraction_summary.problem_documents[:10]:
-                print(
-                    f"- {problem['doc_id']}: {problem['extraction_status']} - "
-                    f"{problem['extraction_error']}"
-                )
-            remaining = len(extraction_summary.problem_documents) - 10
-            if remaining > 0:
-                print(f"...and {remaining} more. See documents.jsonl for details.")
-        print(f"Processed records ready for later phases: {len(processed_records)}")
-        print("Creating retrieval chunks...")
-        chunks, chunking_summary = chunk_documents(processed_records)
-        print(f"Documents processed for chunking: {chunking_summary.document_count}")
-        print(f"Chunks created: {chunking_summary.chunk_count}")
-        print(f"Chunk word count min: {chunking_summary.min_words}")
-        print(f"Chunk word count max: {chunking_summary.max_words}")
-        print(f"Chunk word count average: {chunking_summary.average_words}")
-        print(f"Chunks output: {project_relative(CHUNKS_PATH)}")
-        if chunking_summary.zero_chunk_documents:
-            print("Documents with zero chunks:")
-            for document in chunking_summary.zero_chunk_documents[:10]:
-                print(
-                    f"- {document['doc_id']}: {document['extraction_status']} "
-                    f"({document['text_char_count']} chars)"
-                )
-            remaining = len(chunking_summary.zero_chunk_documents) - 10
-            if remaining > 0:
-                print(f"...and {remaining} more.")
+        chunks_cached = CHUNKS_PATH.exists() and not args.rebuild
+        if chunks_cached:
+            print(f"Cached chunks found at {project_relative(CHUNKS_PATH)} — skipping download and chunking.")
+            print("Use --rebuild to force re-download and re-chunk.")
+            from src.utils import read_jsonl
+            chunks = read_jsonl(CHUNKS_PATH)
+            print(f"Chunks loaded: {len(chunks)}")
+        else:
+            records, summary = parse_dataset(limit=args.limit)
+            print(f"{APP_NAME}: dataset parsed.")
+            print(f"Dataset: {summary.dataset_path}")
+            print(f"Sheet: {summary.sheet_name}")
+            print(f"Rows read: {summary.rows}")
+            print(f"URLs found: {summary.urls}")
+            print(f"Missing URLs: {summary.missing_urls}")
+            print(f"Duplicate URLs: {summary.duplicate_urls}")
+            print(f"Columns: {', '.join(summary.columns)}")
+            print(f"Metadata records saved: {len(records)}")
+            print(f"Output: {project_relative(PROCESSED_DOCUMENTS_PATH)}")
+            print("Downloading source documents...")
+            updated_records, download_summary = download_documents(records, force=args.rebuild)
+            print(f"Download records processed: {download_summary.total_records}")
+            print(f"Downloaded: {download_summary.downloaded}")
+            print(f"Skipped existing: {download_summary.skipped}")
+            print(f"Failed: {download_summary.failed}")
+            print(f"Unsupported: {download_summary.unsupported}")
+            print(f"Duplicates: {download_summary.duplicates}")
+            print(f"Missing URLs: {download_summary.missing_urls}")
+            print(f"Updated metadata: {project_relative(PROCESSED_DOCUMENTS_PATH)}")
+            print(f"Download report: {project_relative(DOWNLOAD_REPORT_PATH)}")
+            if download_summary.failed_urls:
+                print("Failed or unsupported URLs:")
+                for failed in download_summary.failed_urls[:10]:
+                    print(f"- {failed['doc_id']}: {failed['status']} - {failed['error']}")
+                remaining = len(download_summary.failed_urls) - 10
+                if remaining > 0:
+                    print(f"...and {remaining} more. See the download report for details.")
+            print("Extracting and cleaning text...")
+            processed_records, extraction_summary = extract_and_clean_documents(updated_records)
+            print(f"Extraction records processed: {extraction_summary.total_records}")
+            print(f"Extracted: {extraction_summary.extracted}")
+            print(f"Too short: {extraction_summary.too_short}")
+            print(f"Empty: {extraction_summary.empty}")
+            print(f"Failed: {extraction_summary.failed}")
+            print(f"Skipped: {extraction_summary.skipped}")
+            print(f"Cleaned metadata and text: {project_relative(PROCESSED_DOCUMENTS_PATH)}")
+            if extraction_summary.problem_documents:
+                print("Extraction issues:")
+                for problem in extraction_summary.problem_documents[:10]:
+                    print(
+                        f"- {problem['doc_id']}: {problem['extraction_status']} - "
+                        f"{problem['extraction_error']}"
+                    )
+                remaining = len(extraction_summary.problem_documents) - 10
+                if remaining > 0:
+                    print(f"...and {remaining} more. See documents.jsonl for details.")
+            print(f"Processed records ready for later phases: {len(processed_records)}")
+            print("Creating retrieval chunks...")
+            chunks, chunking_summary = chunk_documents(processed_records)
+            print(f"Documents processed for chunking: {chunking_summary.document_count}")
+            print(f"Chunks created: {chunking_summary.chunk_count}")
+            print(f"Chunk word count min: {chunking_summary.min_words}")
+            print(f"Chunk word count max: {chunking_summary.max_words}")
+            print(f"Chunk word count average: {chunking_summary.average_words}")
+            print(f"Chunks output: {project_relative(CHUNKS_PATH)}")
+            if chunking_summary.zero_chunk_documents:
+                print("Documents with zero chunks:")
+                for document in chunking_summary.zero_chunk_documents[:10]:
+                    print(
+                        f"- {document['doc_id']}: {document['extraction_status']} "
+                        f"({document['text_char_count']} chars)"
+                    )
+                remaining = len(chunking_summary.zero_chunk_documents) - 10
+                if remaining > 0:
+                    print(f"...and {remaining} more.")
         print(f"Chunks ready for vectorization: {len(chunks)}")
         print("Building vector store...")
         embedding_model = EmbeddingModel()

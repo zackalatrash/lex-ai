@@ -15,7 +15,7 @@ os.environ.setdefault("USE_TF", "0")
 
 from sentence_transformers import SentenceTransformer
 
-from src.config import EMBEDDING_BATCH_SIZE, EMBEDDING_MODEL_NAME
+from src.config import EMBEDDING_BATCH_SIZE, EMBEDDING_CONFIG_KWARGS, EMBEDDING_MODEL_NAME, EMBEDDING_TRUST_REMOTE_CODE
 
 
 BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
@@ -53,12 +53,17 @@ class EmbeddingModel:
     def __init__(self, model_name: str = EMBEDDING_MODEL_NAME, normalize: bool = True):
         self.model_name = model_name
         self.normalize = normalize
-        self.model = SentenceTransformer(model_name, device="mps")
+        self.model = SentenceTransformer(
+            model_name,
+            device="mps",
+            trust_remote_code=EMBEDDING_TRUST_REMOTE_CODE or None,
+            config_kwargs=EMBEDDING_CONFIG_KWARGS or None,
+        )
         if hasattr(self.model, "get_embedding_dimension"):
             self.vector_dimension = int(self.model.get_embedding_dimension())
         else:
             self.vector_dimension = int(self.model.get_sentence_embedding_dimension())
-        self.uses_bge_query_prefix = "bge-" in model_name.lower()
+        self.uses_bge_query_prefix = "bge-" in model_name.lower() or "arctic-embed" in model_name.lower()
         self.uses_qwen3_query_prompt = "qwen3-embedding" in model_name.lower()
 
     def prepare_text(self, text: str, is_query: bool = False) -> str:
