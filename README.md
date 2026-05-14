@@ -2,8 +2,10 @@
 
 Submission Date: 2026-06-05
 Team Members:
-- Name (Student Number)
-- Name (Student Number)
+- Ziad Alatrash 722338
+- M.D Tasnim Hassan Tabeeb 715660
+- Mahmoud Farid Mahrous Farid 693428
+
 
 ## Project Overview
 
