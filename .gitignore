@@ -2,3 +2,4 @@
 /.streamlit
 /data
 /documents
+/src/__pycache__
