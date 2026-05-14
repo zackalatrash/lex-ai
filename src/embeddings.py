@@ -15,10 +15,11 @@ os.environ.setdefault("USE_TF", "0")
 
 from sentence_transformers import SentenceTransformer
 
-from src.config import EMBEDDING_MODEL_NAME
+from src.config import EMBEDDING_BATCH_SIZE, EMBEDDING_MODEL_NAME
 
 
 BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
+QWEN3_QUERY_PROMPT_NAME = "query"
 
 
 @dataclass(frozen=True)
@@ -52,18 +53,20 @@ class EmbeddingModel:
     def __init__(self, model_name: str = EMBEDDING_MODEL_NAME, normalize: bool = True):
         self.model_name = model_name
         self.normalize = normalize
-        self.model = SentenceTransformer(model_name)
+        self.model = SentenceTransformer(model_name, device="mps")
         if hasattr(self.model, "get_embedding_dimension"):
             self.vector_dimension = int(self.model.get_embedding_dimension())
         else:
             self.vector_dimension = int(self.model.get_sentence_embedding_dimension())
         self.uses_bge_query_prefix = "bge-" in model_name.lower()
+        self.uses_qwen3_query_prompt = "qwen3-embedding" in model_name.lower()
 
     def prepare_text(self, text: str, is_query: bool = False) -> str:
         """Prepare text before embedding.
 
-        BGE v1.5 models recommend an instruction prefix for retrieval queries.
-        Document chunks should not receive this prefix.
+        BGE v1.5 models prepend an instruction prefix for retrieval queries.
+        Qwen3-Embedding models handle the query prompt via prompt_name at encode time.
+        Document chunks never receive a prefix.
         """
         cleaned = text.strip()
         if is_query and self.uses_bge_query_prefix:
@@ -75,7 +78,10 @@ class EmbeddingModel:
         if not text or not text.strip():
             return np.zeros(self.vector_dimension, dtype=np.float32)
         prepared_text = self.prepare_text(text, is_query=is_query)
-        vector = self.model.encode(prepared_text, convert_to_numpy=True, normalize_embeddings=False)
+        encode_kwargs: dict = {"convert_to_numpy": True, "normalize_embeddings": False, "batch_size": EMBEDDING_BATCH_SIZE}
+        if is_query and self.uses_qwen3_query_prompt:
+            encode_kwargs["prompt_name"] = QWEN3_QUERY_PROMPT_NAME
+        vector = self.model.encode(prepared_text, **encode_kwargs)
         vector = np.asarray(vector, dtype=np.float32)
         return normalize_vectors(vector) if self.normalize else vector
 
@@ -92,7 +98,10 @@ class EmbeddingModel:
             non_empty_texts = [
                 self.prepare_text(cleaned_texts[index], is_query=is_query) for index in non_empty_indices
             ]
-            encoded = self.model.encode(non_empty_texts, convert_to_numpy=True, normalize_embeddings=False)
+            encode_kwargs: dict = {"convert_to_numpy": True, "normalize_embeddings": False, "batch_size": EMBEDDING_BATCH_SIZE}
+            if is_query and self.uses_qwen3_query_prompt:
+                encode_kwargs["prompt_name"] = QWEN3_QUERY_PROMPT_NAME
+            encoded = self.model.encode(non_empty_texts, **encode_kwargs)
             encoded = np.asarray(encoded, dtype=np.float32)
             if self.normalize:
                 encoded = normalize_vectors(encoded)

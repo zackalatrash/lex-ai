@@ -38,7 +38,8 @@ MMR_LAMBDA = 0.7            # 0 = pure diversity, 1 = pure relevance
 MMR_FETCH_K_MULTIPLIER = 4  # candidates fetched before MMR = top_k × this
 MIN_EVIDENCE_SIMILARITY = 0.55  # skip LLM call if best chunk scores below this
 
-EMBEDDING_MODEL_NAME = "BAAI/bge-small-en-v1.5"
+EMBEDDING_MODEL_NAME = "Qwen/Qwen3-Embedding-0.6B"
+EMBEDDING_BATCH_SIZE = 4  # lower = less MPS/GPU memory per batch; increase if you have headroom
 OLLAMA_BASE_URL = "http://localhost:11434/v1"
 OLLAMA_MODEL_NAME = "llama3.1"
 OPENAI_API_KEY_FOR_OLLAMA = "ollama"
